@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -24,21 +25,22 @@ type extractedJob struct {
 func Scrape(term string) {
 	var baseURL string = "https://kr.indeed.com/jobs?q=" + term + "&limit=50"
 	var jobs []extractedJob
-	// c := make(chan []extractedJob)
+	startTime := time.Now()
+	c := make(chan []extractedJob)
 	totalPages := getPages(baseURL)
 	for i := 0; i < totalPages; i++ {
 		fmt.Println("Request ", i, "th URL")
-		extractedJobs := getPage(i, baseURL)
-		jobs = append(jobs, extractedJobs...)
-		// go getPage(i, c)
+		go getPage(i, baseURL, c)
 	}
 
-	// for i := 0; i < totalPages; i++ {
-	// 	extractedJobs := <-c
-	// 	jobs = append(jobs, extractedJobs...)
-	// }
+	for i := 0; i < totalPages; i++ {
+		extractedJobs := <-c
+		jobs = append(jobs, extractedJobs...)
+	}
 	writeJobs(jobs)
 	fmt.Println("Done, extracted ", len(jobs))
+	endTime := time.Now()
+	fmt.Println("Operation time: ", endTime.Sub(startTime))
 }
 
 func getPages(url string) int {
@@ -59,18 +61,19 @@ func getPages(url string) int {
 	return pages
 }
 
-func getPage(page int, url string) []extractedJob {
+func getPage(page int, url string, mainC chan<- []extractedJob) {
 	var jobs []extractedJob
 	c := make(chan extractedJob)
 	pageURL := url + "&start=" + strconv.Itoa(page*50)
 	res, err := http.Get(pageURL)
 	checkErr(err)
 	checkCode(res)
+
 	doc, err := goquery.NewDocumentFromReader(res.Body)
-	checkErr(err)
-
+	checkErr(err
+	)
 	searchCards := doc.Find(".jobsearch-SerpJobCard")
-
+	
 	searchCards.Each(func(i int, card *goquery.Selection) {
 		go extractJob(card, c)
 	})
@@ -79,8 +82,7 @@ func getPage(page int, url string) []extractedJob {
 		job := <-c
 		jobs = append(jobs, job)
 	}
-	// mainC <- jobs
-	return jobs
+	mainC <- jobs
 }
 
 func extractJob(card *goquery.Selection, c chan<- extractedJob) {
@@ -98,6 +100,7 @@ func extractJob(card *goquery.Selection, c chan<- extractedJob) {
 }
 
 func writeJobs(jobs []extractedJob) {
+	c := make(chan []string)
 	file, err := os.Create("jobs.csv")
 	checkErr(err)
 
@@ -109,15 +112,25 @@ func writeJobs(jobs []extractedJob) {
 	checkErr(wErr)
 
 	for _, job := range jobs {
-		jobSlice := []string{
-			"https://kr.indeed.com/viewjob?jk=" + job.id,
-			job.title,
-			job.location,
-			job.salary,
-			job.summary}
-		jwErr := w.Write(jobSlice)
-		checkErr(jwErr)
+		go writeOneJob(job, c)
 	}
+
+	for i := 0; i < len(jobs); i++ {
+		job := <-c
+		writeErr := w.Write(job)
+		checkErr(writeErr)
+	}
+
+}
+
+func writeOneJob(job extractedJob, c chan<- []string) {
+	const jobURL = "https://kr.indeed.com/viewjob?jk="
+	c <- []string{
+		jobURL + job.id,
+		job.title,
+		job.location,
+		job.salary,
+		job.summary}
 }
 
 func checkErr(err error) {

@@ -26,5 +26,5 @@ func main() {
 	e.GET("/", handleHome)
 	e.POST("/scrape", handleScrape)
 	e.Logger.Fatal(e.Start(":1323"))
-	// scrapper.Scrape("term")
+	// scrapper.Scrape("python")
 }
